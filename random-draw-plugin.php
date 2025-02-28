@@ -36,10 +36,31 @@ function rdp_admin_page_html() {
         $password = sanitize_text_field($_POST['password']);
         $draw_name = sanitize_text_field($_POST['draw_name']);
         $draw_organisation = sanitize_text_field($_POST['draw_organisation']);
+        $schedule_type = sanitize_text_field($_POST['schedule_type']);
         $schedule_date = sanitize_text_field($_POST['schedule_date']);
         $timezone = sanitize_text_field($_POST['timezone']);
-
-        rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw_organisation, $schedule_date, $timezone);
+    
+        // Save email, password, draw name, and organisation to the options table
+        update_option('rdp_email', $email);
+        update_option('rdp_password', $password);
+        update_option('rdp_draw_name', $draw_name);
+        update_option('rdp_draw_organisation', $draw_organisation);
+    
+        // Handle file upload
+        if (!empty($_FILES['csv_file']['name'])) {
+            $uploaded_file = $_FILES['csv_file'];
+            $upload_overrides = array('test_form' => false);
+            $movefile = wp_handle_upload($uploaded_file, $upload_overrides);
+    
+            if ($movefile && !isset($movefile['error'])) {
+                $file_path = $movefile['file'];
+                rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw_organisation, $schedule_type, $schedule_date, $timezone, $file_path);
+            } else {
+                echo '<div class="notice notice-error"><p>File upload failed: ' . $movefile['error'] . '</p></div>';
+            }
+        } else {
+            echo '<div class="notice notice-error"><p>Please upload a CSV file.</p></div>';
+        }
     }
 
     if (isset($_POST['fetch_results'])) {
@@ -57,34 +78,64 @@ function rdp_admin_page_html() {
     $table_name = $wpdb->prefix . 'random_draw_results';
     $results = $wpdb->get_results("SELECT * FROM $table_name");
 
-    ?>
-    <div class="wrap">
-        <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
+  
         
-        <h2>Generate Token</h2>
-        <form method="post" action="">
-            <table class="form-table">
-                <tr>
-                    <th scope="row"><label for="email">Email</label></th>
-                    <td><input name="email" type="email" id="email" value="" class="regular-text" required></td>
-                </tr>
-                <tr>
-                    <th scope="row"><label for="password">Password</label></th>
-                    <td><input name="password" type="password" id="password" value="" class="regular-text" required></td>
-                </tr>
-                <tr>
-                    <th scope="row"><label for="draw_name">Draw Name</label></th>
-                    <td><input name="draw_name" type="text" id="draw_name" value="" class="regular-text" required></td>
-                </tr>
-                <tr>
-                    <th scope="row"><label for="draw_organisation">Draw Organisation</label></th>
-                    <td><input name="draw_organisation" type="text" id="draw_organisation" value="" class="regular-text" required></td>
-                </tr>
-                <tr>
-                    <th scope="row"><label for="schedule_date">Schedule Date</label></th>
-                    <td><input name="schedule_date" type="datetime-local" id="schedule_date" value="" class="regular-text" required></td>
-                </tr>
-                <tr>
+      
+// Retrieve saved email, password, draw name, and organisation
+$saved_email = get_option('rdp_email', '');
+$saved_password = get_option('rdp_password', '');
+$saved_draw_name = get_option('rdp_draw_name', '');
+$saved_draw_organisation = get_option('rdp_draw_organisation', '');
+
+?>
+<div class="wrap">
+    <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
+    
+    <h2>Generate Token</h2>
+    <form method="post" action="" enctype="multipart/form-data">
+        <table class="form-table">
+            <tr>
+                <th scope="row"><label for="email">Email</label></th>
+                <td><input name="email" type="email" id="email" value="<?php echo esc_attr($saved_email); ?>" class="regular-text" required></td>
+            </tr>
+            <tr>
+                <th scope="row"><label for="password">Password</label></th>
+                <td><input name="password" type="password" id="password" value="<?php echo esc_attr($saved_password); ?>" class="regular-text" required></td>
+            </tr>
+            <tr>
+                <th scope="row"><label for="draw_name">Draw Name</label></th>
+                <td><input name="draw_name" type="text" id="draw_name" value="<?php echo esc_attr($saved_draw_name); ?>" class="regular-text" required></td>
+            </tr>
+            <tr>
+                <th scope="row"><label for="draw_organisation">Draw Organisation</label></th>
+                <td><input name="draw_organisation" type="text" id="draw_organisation" value="<?php echo esc_attr($saved_draw_organisation); ?>" class="regular-text" required></td>
+            </tr>
+            <tr>
+                <th scope="row"><label for="schedule_type">Schedule Type</label></th>
+                <td>
+                    <select name="schedule_type" id="schedule_type" class="regular-text">
+                        <option value="immediate">Immediate</option>
+                        <option value="schedule">Schedule</option>
+                    </select>
+                </td>
+            </tr>
+            <tr id="schedule_date_row" style="display: none;">
+                <th scope="row"><label for="schedule_date">Schedule Date</label></th>
+                <td><input name="schedule_date" type="datetime-local" id="schedule_date" class="regular-text"></td>
+            </tr>
+
+            <script>
+            document.getElementById("schedule_type").addEventListener("change", function() {
+                var scheduleDateRow = document.getElementById("schedule_date_row");
+                if (this.value === "schedule") {
+                    scheduleDateRow.style.display = "table-row";
+                } else {
+                    scheduleDateRow.style.display = "none";
+                }
+            });
+            </script>
+
+            <tr>
                 <th scope="row"><label for="timezone">Timezone</label></th>
                 <td>
                     <select name="timezone" id="timezone" class="regular-text" required>
@@ -109,56 +160,59 @@ function rdp_admin_page_html() {
                     </select>
                 </td>
             </tr>
-
-            </table>
-            <?php submit_button('Generate Token', 'primary', 'generate_token'); ?>
-        </form>
-
-        <h2>Fetch Results</h2>
-        <form method="post" action="">
-            <?php submit_button('Fetch Results', 'primary', 'fetch_results'); ?>
-        </form>
-
-        <h2>Draw Results</h2>
-        <table class="wp-list-table widefat fixed striped">
-            <thead>
-                <tr>
-                    <th>Draw ID</th>
-                    <th>Draw Name</th>
-                    <th>Draw Organisation</th>
-                    <th>Draw Date</th>
-                    <th>Winner No</th>
-                    <th>Entry No</th>
-                    <th>First Name</th>
-                    <th>Last Name</th>
-                    <th>Email</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($results as $result): ?>
-                <tr>
-                    <td><?php echo esc_html($result->draw_id); ?></td>
-                    <td><?php echo esc_html($result->draw_name); ?></td>
-                    <td><?php echo esc_html($result->draw_organisation); ?></td>
-                    <td><?php echo esc_html($result->draw_date); ?></td>
-                    <td><?php echo esc_html($result->winner_no); ?></td>
-                    <td><?php echo esc_html($result->entry_no); ?></td>
-                    <td><?php echo esc_html($result->first_name); ?></td>
-                    <td><?php echo esc_html($result->last_name); ?></td>
-                    <td><?php echo esc_html($result->email); ?></td>
-                    <td>
-                        <form method="post" action="">
-                            <input type="hidden" name="delete_id" value="<?php echo esc_attr($result->id); ?>">
-                            <?php submit_button('Delete', 'delete', 'delete_entry', false); ?>
-                        </form>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
+            <tr>
+                <th scope="row"><label for="csv_file">CSV File</label></th>
+                <td><input name="csv_file" type="file" id="csv_file" accept=".csv" required></td>
+            </tr>
         </table>
-    </div>
-    <?php
+        <?php submit_button('Generate Token', 'primary', 'generate_token'); ?>
+    </form>
+
+    <h2>Fetch Results</h2>
+    <form method="post" action="">
+        <?php submit_button('Fetch Results', 'primary', 'fetch_results'); ?>
+    </form>
+
+    <h2>Draw Results</h2>
+    <table class="wp-list-table widefat fixed striped">
+        <thead>
+            <tr>
+                <th>Draw ID</th>
+                <th>Draw Name</th>
+                <th>Draw Organisation</th>
+                <th>Draw Date</th>
+                <th>Winner No</th>
+                <th>Entry No</th>
+                <th>First Name</th>
+                <th>Last Name</th>
+                <th>Email</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ($results as $result): ?>
+            <tr>
+                <td><?php echo esc_html($result->draw_id); ?></td>
+                <td><?php echo esc_html($result->draw_name); ?></td>
+                <td><?php echo esc_html($result->draw_organisation); ?></td>
+                <td><?php echo esc_html($result->draw_date); ?></td>
+                <td><?php echo esc_html($result->winner_no); ?></td>
+                <td><?php echo esc_html($result->entry_no); ?></td>
+                <td><?php echo esc_html($result->first_name); ?></td>
+                <td><?php echo esc_html($result->last_name); ?></td>
+                <td><?php echo esc_html($result->email); ?></td>
+                <td>
+                    <form method="post" action="">
+                        <input type="hidden" name="delete_id" value="<?php echo esc_attr($result->id); ?>">
+                        <?php submit_button('Delete', 'delete', 'delete_entry', false); ?>
+                    </form>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+<?php
 }
 
 function rdp_delete_entry($id) {
@@ -213,7 +267,7 @@ function rdp_create_database_table() {
 register_activation_hook(__FILE__, 'rdp_create_database_table');
 
 // Function to generate token, upload file, create draw, confirm draw, and display winner details
-function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw_organisation, $schedule_date, $timezone) {
+function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw_organisation, $schedule_type, $schedule_date, $timezone, $file_path) {
     $base_url = 'https://api.randomdraws.com';
     
     // Step 1: Generate Token
@@ -251,7 +305,6 @@ function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw
 
     // Step 2: Upload File
     $upload_url = $base_url . '/upload';
-    $file_path = plugin_dir_path(__FILE__) . '/randomentry.csv'; // Adjust the path to your file
 
     if (!file_exists($file_path)) {
         error_log('File not found: ' . $file_path);
@@ -292,6 +345,9 @@ function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw
     // Step 3: Create Draw
     $draw_url = $base_url . '/draws';
 
+    // Determine if the draw is scheduled based on the schedule_type
+    $isScheduled = ($schedule_type === 'schedule');
+
     $draw_data = array(
         'name' => $draw_name,
         'organisation' => $draw_organisation,
@@ -303,8 +359,8 @@ function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw
             'reserves' => 0,
             'description' => 'API PRIZE'
         )),
-        'isScheduled' => true,
-        'scheduleDate' => $schedule_date,
+        'isScheduled' => $isScheduled,
+        'scheduleDate' => $isScheduled ? $schedule_date : null,
         'timezone' => $timezone
     );
 
@@ -333,7 +389,7 @@ function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw
     }
 
     $draw_id = $draw_data['drawId'];
-    set_transient('rdp_draw_id', $draw_id, 3600); 
+    set_transient('rdp_draw_id', $draw_id, 3600);
 
     echo '<div class="notice notice-success"><p>Draw created successfully!</p></div>';
 
@@ -386,9 +442,9 @@ function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw
 
     // Display Success Message
     echo '<div class="notice notice-success"><p>Results fetched successfully!</p></div>';
-    echo '<pre>';
-    print_r($results_body);
-    echo '</pre>';
+    // echo '<pre>';
+    // print_r($results_body);
+    // echo '</pre>';
 }
 
 // Function to fetch results and store in database
@@ -402,8 +458,36 @@ function rdp_fetch_results() {
         return;
     }
 
-    $results_url = $base_url . '/draws/' . $draw_id . '/api-winners.csv';
+    // Fetch Draw Details to get Draw Name and Organisation
+    $draw_details_url = $base_url . '/draws/' . $draw_id;
+    $draw_details_response = wp_remote_get($draw_details_url, array(
+        'headers' => array(
+            'Authorization' => 'Bearer ' . $token,
+            'Content-Type' => 'application/json'
+        ),
+        'timeout' => 30 // Increase timeout to 30 seconds
+    ));
 
+    if (is_wp_error($draw_details_response)) {
+        error_log('Fetching draw details failed: ' . $draw_details_response->get_error_message());
+        echo '<div class="notice notice-error"><p>Fetching draw details failed. Check the logs for more details.</p></div>';
+        return;
+    }
+
+    $draw_details_body = wp_remote_retrieve_body($draw_details_response);
+    $draw_details = json_decode($draw_details_body, true);
+
+    if (empty($draw_details)) {
+        error_log('No draw details found in response: ' . print_r($draw_details_body, true));
+        echo '<div class="notice notice-error"><p>No draw details found in response. Check the logs for more details.</p></div>';
+        return;
+    }
+
+    $draw_name = $draw_details['name'];
+    $draw_organisation = $draw_details['organisation'];
+
+    // Fetch Draw Results
+    $results_url = $base_url . '/draws/' . $draw_id . '/api-winners.csv';
     $results_response = wp_remote_get($results_url, array(
         'headers' => array(
             'Authorization' => 'Bearer ' . $token,
@@ -436,23 +520,22 @@ function rdp_fetch_results() {
     foreach ($lines as $line) {
         $data = str_getcsv($line);
         if (count($data) === count($headers)) {
-            $draw_id = $draw_id; // Replace with actual draw ID
             $email = $data[5]; // Assuming email is in the 6th column
-    
+
             // Check if the entry already exists
             $existing_entry = $wpdb->get_row($wpdb->prepare(
                 "SELECT * FROM $table_name WHERE draw_id = %s AND email = %s",
                 $draw_id,
                 $email
             ));
-    
+
             if (!$existing_entry) {
                 $wpdb->insert(
                     $table_name,
                     array(
                         'draw_id' => $draw_id,
-                        'draw_name' => 'TEST DRAW',
-                        'draw_organisation' => 'TEST',
+                        'draw_name' => $draw_name,
+                        'draw_organisation' => $draw_organisation,
                         'draw_date' => current_time('mysql'),
                         'winner_no' => $data[1],
                         'entry_no' => $data[2],
