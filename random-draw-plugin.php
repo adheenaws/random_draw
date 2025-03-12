@@ -43,6 +43,7 @@ function rdp_admin_page_html() {
         }
     }
 
+  
     if (isset($_POST['generate_token'])) {
         $email = sanitize_email($_POST['email']);
         $password = sanitize_text_field($_POST['password']);
@@ -59,24 +60,15 @@ function rdp_admin_page_html() {
         update_option('rdp_draw_name', $draw_name);
         update_option('rdp_draw_organisation', $draw_organisation);
         update_option('rdp_selected_product', $selected_product_id); // Save selected product ID
-    
-        // Handle file upload
-        if (!empty($_FILES['csv_file']['name'])) {
-            $uploaded_file = $_FILES['csv_file'];
-            $upload_overrides = array('test_form' => false);
-            $movefile = wp_handle_upload($uploaded_file, $upload_overrides);
 
-            if ($movefile && !isset($movefile['error'])) {
-                $file_path = $movefile['file'];
-                rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw_organisation, $schedule_type, $schedule_date, $timezone, $file_path);
-            } else {
-                echo '<div class="notice notice-error"><p>File upload failed: ' . $movefile['error'] . '</p></div>';
-            }
+        // Automatically generate CSV and upload
+        $file_path = rdp_generate_csv_from_product($selected_product_id);
+        if ($file_path) {
+            rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw_organisation, $schedule_type, $schedule_date, $timezone, $file_path);
         } else {
-            echo '<div class="notice notice-error"><p>Please upload a CSV file.</p></div>';
+            echo '<div class="notice notice-error"><p>Failed to generate CSV file.</p></div>';
         }
-        }
-
+    }
 
     if (isset($_POST['fetch_results'])) {
         rdp_fetch_results();
@@ -108,57 +100,57 @@ function rdp_admin_page_html() {
     $saved_draw_organisation = get_option('rdp_draw_organisation', '');
     $saved_selected_product = get_option('rdp_selected_product', ''); // Retrieve saved selected product
 
-// Fetch WooCommerce products
-$products = wc_get_products(array('status' => 'publish', 'limit' => -1));
-?>
-<div class="wrap">
-    <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
-    
-    <h2>Generate Token</h2>
-        <form method="post" action="" enctype="multipart/form-data">
-            <table class="form-table">
-                <tr>
-                    <th scope="row"><label for="email">Email</label></th>
-                    <td><input name="email" type="email" id="email" value="<?php echo esc_attr($saved_email); ?>" class="regular-text" required></td>
-                </tr>
-                <tr>
-                    <th scope="row"><label for="password">Password</label></th>
-                    <td><input name="password" type="password" id="password" value="<?php echo esc_attr($saved_password); ?>" class="regular-text" required></td>
-                </tr>
-                <tr>
-                    <th scope="row"><label for="draw_name">Draw Name</label></th>
-                    <td><input name="draw_name" type="text" id="draw_name" value="<?php echo esc_attr($saved_draw_name); ?>" class="regular-text" required></td>
-                </tr>
-                <tr>
-                    <th scope="row"><label for="draw_organisation">Draw Organisation</label></th>
-                    <td><input name="draw_organisation" type="text" id="draw_organisation" value="<?php echo esc_attr($saved_draw_organisation); ?>" class="regular-text" required></td>
-                </tr>
-                <tr>
-                    <th scope="row"><label for="selected_product">Competition</label></th>
-                    <td>
-                        <select name="selected_product" id="selected_product" class="regular-text" required>
-                            <option value="">Select a Product</option>
-                            <?php foreach ($products as $product): ?>
-                                <option value="<?php echo esc_attr($product->get_id()); ?>" <?php selected($saved_selected_product, $product->get_id()); ?>>
-                                    <?php echo esc_html($product->get_name()); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </td>
-                </tr>
-            <tr>
-                <th scope="row"><label for="schedule_type">Schedule Type</label></th>
-                <td>
-                    <select name="schedule_type" id="schedule_type" class="regular-text">
-                        <option value="immediate">Immediate</option>
-                        <option value="schedule">Schedule</option>
-                    </select>
-                </td>
-            </tr>
-            <tr id="schedule_date_row" style="display: none;">
-                <th scope="row"><label for="schedule_date">Schedule Date</label></th>
-                <td><input name="schedule_date" type="datetime-local" id="schedule_date" class="regular-text"></td>
-            </tr>
+ // Fetch WooCommerce products
+ $products = wc_get_products(array('status' => 'publish', 'limit' => -1));
+ ?>
+ <div class="wrap">
+     <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
+     
+     <h2>Generate Token</h2>
+     <form method="post" action="">
+         <table class="form-table">
+             <tr>
+                 <th scope="row"><label for="email">Email</label></th>
+                 <td><input name="email" type="email" id="email" value="<?php echo esc_attr($saved_email); ?>" class="regular-text" required></td>
+             </tr>
+             <tr>
+                 <th scope="row"><label for="password">Password</label></th>
+                 <td><input name="password" type="password" id="password" value="<?php echo esc_attr($saved_password); ?>" class="regular-text" required></td>
+             </tr>
+             <tr>
+                 <th scope="row"><label for="draw_name">Draw Name</label></th>
+                 <td><input name="draw_name" type="text" id="draw_name" value="<?php echo esc_attr($saved_draw_name); ?>" class="regular-text" required></td>
+             </tr>
+             <tr>
+                 <th scope="row"><label for="draw_organisation">Draw Organisation</label></th>
+                 <td><input name="draw_organisation" type="text" id="draw_organisation" value="<?php echo esc_attr($saved_draw_organisation); ?>" class="regular-text" required></td>
+             </tr>
+             <tr>
+                 <th scope="row"><label for="selected_product">Competition</label></th>
+                 <td>
+                     <select name="selected_product" id="selected_product" class="regular-text" required>
+                         <option value="">Select a Product</option>
+                         <?php foreach ($products as $product): ?>
+                             <option value="<?php echo esc_attr($product->get_id()); ?>" <?php selected($saved_selected_product, $product->get_id()); ?>>
+                                 <?php echo esc_html($product->get_name()); ?>
+                             </option>
+                         <?php endforeach; ?>
+                     </select>
+                 </td>
+             </tr>
+             <tr>
+                 <th scope="row"><label for="schedule_type">Schedule Type</label></th>
+                 <td>
+                     <select name="schedule_type" id="schedule_type" class="regular-text">
+                         <option value="immediate">Immediate</option>
+                         <option value="schedule">Schedule</option>
+                     </select>
+                 </td>
+             </tr>
+             <tr id="schedule_date_row" style="display: none;">
+                 <th scope="row"><label for="schedule_date">Schedule Date</label></th>
+                 <td><input name="schedule_date" type="datetime-local" id="schedule_date" class="regular-text"></td>
+             </tr>
 
             <script>
             document.getElementById("schedule_type").addEventListener("change", function() {
@@ -171,38 +163,34 @@ $products = wc_get_products(array('status' => 'publish', 'limit' => -1));
             });
             </script>
 
-            <tr>
-                <th scope="row"><label for="timezone">Timezone</label></th>
-                <td>
-                    <select name="timezone" id="timezone" class="regular-text" required>
-                        <option value="">Select Timezone</option>
-                        <option value="Africa/Abidjan">Africa/Abidjan</option>
-                        <option value="Africa/Accra">Africa/Accra</option>
-                        <option value="Africa/Addis_Ababa">Africa/Addis Ababa</option>
-                        <option value="Africa/Algiers">Africa/Algiers</option>
-                        <option value="Africa/Asmara">Africa/Asmara</option>
-                        <option value="Africa/Bamako">Africa/Bamako</option>
-                        <option value="Africa/Cairo">Africa/Cairo</option>
-                        <option value="America/New_York">America/New York</option>
-                        <option value="America/Chicago">America/Chicago</option>
-                        <option value="America/Los_Angeles">America/Los Angeles</option>
-                        <option value="Asia/Tokyo">Asia/Tokyo</option>
-                        <option value="Asia/Dubai">Asia/Dubai</option>
-                        <option value="Asia/Kolkata">Asia/Kolkata</option>
-                        <option value="Asia/Shanghai">Asia/Shanghai</option>
-                        <option value="Australia/Sydney">Australia/Sydney</option>
-                        <option value="Europe/London">Europe/London</option>
-                        <option value="Europe/Paris">Europe/Paris</option>
-                    </select>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row"><label for="csv_file">CSV File</label></th>
-                <td><input name="csv_file" type="file" id="csv_file" accept=".csv" required></td>
-            </tr>
-        </table>
-        <?php submit_button('Generate Token', 'primary', 'generate_token'); ?>
-    </form>
+<tr>
+                    <th scope="row"><label for="timezone">Timezone</label></th>
+                    <td>
+                        <select name="timezone" id="timezone" class="regular-text" required>
+                            <option value="">Select Timezone</option>
+                            <option value="Africa/Abidjan">Africa/Abidjan</option>
+                            <option value="Africa/Accra">Africa/Accra</option>
+                            <option value="Africa/Addis_Ababa">Africa/Addis Ababa</option>
+                            <option value="Africa/Algiers">Africa/Algiers</option>
+                            <option value="Africa/Asmara">Africa/Asmara</option>
+                            <option value="Africa/Bamako">Africa/Bamako</option>
+                            <option value="Africa/Cairo">Africa/Cairo</option>
+                            <option value="America/New_York">America/New York</option>
+                            <option value="America/Chicago">America/Chicago</option>
+                            <option value="America/Los_Angeles">America/Los Angeles</option>
+                            <option value="Asia/Tokyo">Asia/Tokyo</option>
+                            <option value="Asia/Dubai">Asia/Dubai</option>
+                            <option value="Asia/Kolkata">Asia/Kolkata</option>
+                            <option value="Asia/Shanghai">Asia/Shanghai</option>
+                            <option value="Australia/Sydney">Australia/Sydney</option>
+                            <option value="Europe/London">Europe/London</option>
+                            <option value="Europe/Paris">Europe/Paris</option>
+                        </select>
+                    </td>
+                </tr>
+            </table>
+            <?php submit_button('Generate Token', 'primary', 'generate_token'); ?>
+        </form>
 
     <h2>Fetch Draw Details</h2>
 <form method="post" action="">
@@ -243,7 +231,7 @@ $products = wc_get_products(array('status' => 'publish', 'limit' => -1));
         <?php endif; ?>
     </tbody>
 </table>
-<!-- Pop-up Modal -->
+
 <!-- Pop-up Modal -->
 <div id="editDrawModal" class="modal">
     <div class="modal-content">
@@ -482,7 +470,42 @@ $products = wc_get_products(array('status' => 'publish', 'limit' => -1));
 </div>
 <?php
 }
+// Function to generate CSV from product customers
+function rdp_generate_csv_from_product($product_id) {
+    $orders = wc_get_orders(['limit' => -1, 'status' => 'completed']);
+    $customers = [];
 
+    foreach ($orders as $order) {
+        foreach ($order->get_items() as $item) {
+            if ($item->get_product_id() == $product_id) {
+                $customers[] = [
+                    'name' => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name(),
+                    'email' => $order->get_billing_email(),
+                    'date' => $order->get_date_created()->date('Y-m-d')
+                ];
+            }
+        }
+    }
+
+    if (empty($customers)) {
+        return false;
+    }
+
+    $upload_dir = wp_upload_dir();
+    $file_path = $upload_dir['path'] . '/customers.csv';
+    $file_url = $upload_dir['url'] . '/customers.csv';
+
+    $file = fopen($file_path, 'w');
+    fputcsv($file, ['Name', 'Email', 'Order Date']);
+
+    foreach ($customers as $customer) {
+        fputcsv($file, $customer);
+    }
+
+    fclose($file);
+
+    return $file_path;
+}
 
 function rdp_delete_all_results() {
     global $wpdb;
@@ -711,8 +734,7 @@ function rdp_fetch_and_store_draw_details() {
     $token = $token_data['token'];
     set_transient('rdp_token', $token, 3600); // Token expires in 1 hour
 
-    // Rest of the function remains the same...
-    // Fetch Draw Details
+    // Step 2: Fetch Draw Details
     $draws_url = $base_url . '/draws/?page=1&count=5&sortField=DrawNumber&descending=true&showCancelled=false';
     $draws_response = wp_remote_get($draws_url, array(
         'headers' => array(
@@ -730,9 +752,6 @@ function rdp_fetch_and_store_draw_details() {
 
     $draws_body = wp_remote_retrieve_body($draws_response);
     $draws_data = json_decode($draws_body, true);
-
-    // Log API response for debugging
-    error_log('API Response: ' . print_r($draws_data, true));
 
     if (!is_array($draws_data) || !isset($draws_data['draws'])) {
         error_log('Invalid API response format: ' . print_r($draws_data, true));
@@ -760,28 +779,24 @@ function rdp_fetch_and_store_draw_details() {
         $schedule_date = isset($draw['scheduleDate']) ? $draw['scheduleDate'] : '';
         $timezone = isset($draw['timezone']) ? $draw['timezone'] : '';
 
-        // Check if the draw is active and scheduled
-        if ($is_scheduled && strtotime($schedule_date) > time()) {
-            // Insert or update the draw details
-            $wpdb->replace(
-                $table_name,
-                array(
-                    'draw_id' => $draw_id,
-                    'draw_name' => $draw_name,
-                    'draw_organisation' => $draw_organisation,
-                    'is_scheduled' => $is_scheduled,
-                    'schedule_date' => $schedule_date,
-                    'timezone' => $timezone
-                )
-            );
-        }
+        // Insert or update the draw details
+        $wpdb->replace(
+            $table_name,
+            array(
+                'draw_id' => $draw_id,
+                'draw_name' => $draw_name,
+                'draw_organisation' => $draw_organisation,
+                'is_scheduled' => $is_scheduled,
+                'schedule_date' => $schedule_date,
+                'timezone' => $timezone
+            )
+        );
     }
 
     // Display Success Message
-    echo '<div class="notice notice-success"><p>Active scheduled draw details fetched and stored successfully!</p></div>';
+    echo '<div class="notice notice-success"><p>Draw details fetched and stored successfully!</p></div>';
 }
 
-// Function to generate token, upload file, create draw, confirm draw, and display winner details
 function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw_organisation, $schedule_type, $schedule_date, $timezone, $file_path) {
     $base_url = 'https://api.randomdraws.com';
     
@@ -857,42 +872,41 @@ function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw
 
     echo '<div class="notice notice-success"><p>File uploaded successfully!</p></div>';
 
-  
-   // Step 3: Create Draw
-   $draw_url = $base_url . '/draws';
+    // Step 3: Create Draw
+    $draw_url = $base_url . '/draws';
 
-   // Determine if the draw is scheduled based on the schedule_type
-   $isScheduled = ($schedule_type === 'schedule');
+    // Determine if the draw is scheduled based on the schedule_type
+    $isScheduled = ($schedule_type === 'schedule');
 
-   // Get selected product ID and its name
-   $selected_product_id = get_option('rdp_selected_product', 1);
-   $selected_product = wc_get_product($selected_product_id);
-   $prize_description = $selected_product ? $selected_product->get_name() : 'API PRIZE'; // Use product name as prize description
+    // Get selected product ID and its name
+    $selected_product_id = get_option('rdp_selected_product', 1);
+    $selected_product = wc_get_product($selected_product_id);
+    $prize_description = $selected_product ? $selected_product->get_name() : 'API PRIZE'; // Use product name as prize description
 
-   $draw_data = array(
-       'name' => $draw_name,
-       'organisation' => $draw_organisation,
-       'uploadFilename' => $upload_filename,
-       'headerRowsIncluded' => true,
-       'prizes' => array(array(
-           'id' => $selected_product_id,
-           'quantity' => 1,
-           'reserves' => 0,
-           'description' => $prize_description // Use product name as prize description
-       )),
-       'isScheduled' => $isScheduled,
-       'scheduleDate' => $isScheduled ? $schedule_date : null,
-       'timezone' => $timezone
-   );
+    $draw_data = array(
+        'name' => $draw_name,
+        'organisation' => $draw_organisation,
+        'uploadFilename' => $upload_filename,
+        'headerRowsIncluded' => true,
+        'prizes' => array(array(
+            'id' => $selected_product_id,
+            'quantity' => 1,
+            'reserves' => 0,
+            'description' => $prize_description // Use product name as prize description
+        )),
+        'isScheduled' => $isScheduled,
+        'scheduleDate' => $isScheduled ? $schedule_date : null,
+        'timezone' => $timezone
+    );
 
-   $draw_response = wp_remote_post($draw_url, array(
-       'headers' => array(
-           'Authorization' => 'Bearer ' . $token,
-           'Content-Type' => 'application/json'
-       ),
-       'body' => json_encode($draw_data),
-       'timeout' => 30 // Increase timeout to 30 seconds
-   ));
+    $draw_response = wp_remote_post($draw_url, array(
+        'headers' => array(
+            'Authorization' => 'Bearer ' . $token,
+            'Content-Type' => 'application/json'
+        ),
+        'body' => json_encode($draw_data),
+        'timeout' => 30 // Increase timeout to 30 seconds
+    ));
 
     if (is_wp_error($draw_response)) {
         error_log('Draw creation failed: ' . $draw_response->get_error_message());
@@ -963,11 +977,7 @@ function rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw
 
     // Display Success Message
     echo '<div class="notice notice-success"><p>Results fetched successfully!</p></div>';
-    // echo '<pre>';
-    // print_r($results_body);
-    // echo '</pre>';
 }
-
 // Function to fetch results and store in database
 function rdp_fetch_results() {
     $base_url = 'https://api.randomdraws.com';
@@ -1249,3 +1259,4 @@ function rdp_ajax_fetch_results() {
 }
 add_action('wp_ajax_rdp_fetch_results', 'rdp_ajax_fetch_results');
 add_action('wp_ajax_nopriv_rdp_fetch_results', 'rdp_ajax_fetch_results');
+
