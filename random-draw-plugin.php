@@ -362,22 +362,43 @@ $products = wc_get_products(array('status' => 'publish', 'limit' => -1));
 </table>
 
 <!-- Pop-up Modal -->
+<!-- Pop-up Modal -->
 <div id="editDrawModal" class="modal">
     <div class="modal-content">
         <span class="close">&times;</span>
         <h2>Edit Draw Details</h2>
-        <form id="editDrawForm" method="POST" action="http://mysite.local/wp-json/random-draw-plugin/v1/update-draw">
+        <form id="editDrawForm" method="POST" action="">
             <input type="hidden" name="draw_id" id="editDrawId">
             <label for="editDrawName">Draw Name:</label>
-            <input type="text" name="draw_name" id="editDrawName">
+            <input type="text" name="draw_name" id="editDrawName" required>
             <label for="editDrawOrganisation">Organisation:</label>
-            <input type="text" id="editDrawOrganisation" name="draw_organisation">
-            <label for="editScheduleDate">Schedule Date:</label>
-            <input type="date" id="editScheduleDate" name="schedule_date" required>
+            <input type="text" id="editDrawOrganisation" name="draw_organisation" required>
+            <label for="editScheduleType">Schedule Type:</label>
+            <select name="schedule_type" id="editScheduleType" class="regular-text" required>
+                <option value="immediate">Immediate</option>
+                <option value="schedule">Schedule</option>
+            </select>
+            <label for="editScheduleDate" id="editScheduleDateLabel" style="display: none;">Schedule Date:</label>
+            <input type="datetime-local" id="editScheduleDate" name="schedule_date" style="display: none;">
             <label for="editTimezone">Timezone:</label>
             <select id="editTimezone" name="timezone" required>
-                <option value="Africa/Abidjan">Africa/Abidjan</option>
-                <option value="Africa/Accra">Africa/Accra</option>
+            <option value="Africa/Abidjan">Africa/Abidjan</option>
+                            <option value="Africa/Accra">Africa/Accra</option>
+                            <option value="Africa/Addis_Ababa">Africa/Addis Ababa</option>
+                            <option value="Africa/Algiers">Africa/Algiers</option>
+                            <option value="Africa/Asmara">Africa/Asmara</option>
+                            <option value="Africa/Bamako">Africa/Bamako</option>
+                            <option value="Africa/Cairo">Africa/Cairo</option>
+                            <option value="America/New_York">America/New York</option>
+                            <option value="America/Chicago">America/Chicago</option>
+                            <option value="America/Los_Angeles">America/Los Angeles</option>
+                            <option value="Asia/Tokyo">Asia/Tokyo</option>
+                            <option value="Asia/Dubai">Asia/Dubai</option>
+                            <option value="Asia/Kolkata">Asia/Kolkata</option>
+                            <option value="Asia/Shanghai">Asia/Shanghai</option>
+                            <option value="Australia/Sydney">Australia/Sydney</option>
+                            <option value="Europe/London">Europe/London</option>
+                            <option value="Europe/Paris">Europe/Paris</option>
             </select>
             <button type="submit">Save Changes</button>
         </form>
@@ -385,30 +406,98 @@ $products = wc_get_products(array('status' => 'publish', 'limit' => -1));
 </div>
 
 <style>
-    .modal {
-        display: none;
-        position: fixed;
-        z-index: 1;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0,0,0,0.4);
-        padding-top: 60px;
-    }
+    /* Modal Styling */
+.modal {
+    display: none; /* Hidden by default */
+    position: fixed;
+    z-index: 1000; /* Ensure it's on top of other elements */
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto; /* Enable scrolling if needed */
+    background-color: rgba(0, 0, 0, 0.5); /* Black background with opacity */
+}
+
+.modal-content {
+    background-color: #fff;
+    margin: 5% auto; /* Center the modal vertically */
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    width: 50%; /* Adjust the width as needed */
+    max-width: 600px; /* Maximum width */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    animation: fadeIn 0.3s ease-in-out; /* Add a fade-in animation */
+}
+
+/* Close Button Styling */
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.close:hover,
+.close:focus {
+    color: #000;
+    text-decoration: none;
+}
+
+/* Form Styling */
+#editDrawForm label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #333;
+}
+
+#editDrawForm input[type="text"],
+#editDrawForm input[type="datetime-local"],
+#editDrawForm select {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+
+#editDrawForm input[type="text"]:focus,
+#editDrawForm input[type="datetime-local"]:focus,
+#editDrawForm select:focus {
+    border-color: #0073aa;
+    outline: none;
+    box-shadow: 0 0 5px rgba(0, 115, 170, 0.5);
+}
+
+#editDrawForm button[type="submit"] {
+    background-color: #0073aa;
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+#editDrawForm button[type="submit"]:hover {
+    background-color: #005177;
+}
+
+
+/* Responsive Styling */
+@media (max-width: 768px) {
     .modal-content {
-        background-color: #fefefe;
-        margin: 5% auto;
-        padding: 20px;
-        border: 1px solid #888;
-        width: 50%;
+        width: 90%; /* Make the modal wider on smaller screens */
+        margin: 10% auto;
     }
-    .close {
-        float: right;
-        font-size: 28px;
-        font-weight: bold;
-        cursor: pointer;
-    }
+}
 </style>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
@@ -422,8 +511,14 @@ document.addEventListener("DOMContentLoaded", function () {
             document.getElementById('editDrawId').value = button.getAttribute('data-draw-id');
             document.getElementById('editDrawName').value = button.getAttribute('data-draw-name');
             document.getElementById('editDrawOrganisation').value = button.getAttribute('data-draw-organisation');
+            document.getElementById('editScheduleType').value = 'schedule'; // Set to "Schedule" by default
             document.getElementById('editScheduleDate').value = button.getAttribute('data-schedule-date');
             document.getElementById('editTimezone').value = button.getAttribute('data-timezone');
+
+            // Show the schedule date field by default
+            document.getElementById('editScheduleDate').style.display = 'block';
+            document.getElementById('editScheduleDateLabel').style.display = 'block';
+
             modal.style.display = "block";
         }
     }
@@ -439,6 +534,19 @@ document.addEventListener("DOMContentLoaded", function () {
             modal.style.display = "none";
         }
     };
+
+    // Handle schedule type toggle in the modal
+    document.getElementById('editScheduleType').addEventListener('change', function () {
+        let scheduleDateInput = document.getElementById('editScheduleDate');
+        let scheduleDateLabel = document.getElementById('editScheduleDateLabel');
+        if (this.value === 'schedule') {
+            scheduleDateInput.style.display = 'block';
+            scheduleDateLabel.style.display = 'block';
+        } else {
+            scheduleDateInput.style.display = 'none';
+            scheduleDateLabel.style.display = 'none';
+        }
+    });
 
     // Handle form submission via AJAX
     document.getElementById('editDrawForm').addEventListener('submit', function (event) {
@@ -488,6 +596,7 @@ document.addEventListener("DOMContentLoaded", function () {
                                 data-draw-id="${draw.draw_id}"
                                 data-draw-name="${draw.draw_name}"
                                 data-draw-organisation="${draw.draw_organisation}"
+                                data-schedule-type="${draw.is_scheduled ? 'schedule' : 'immediate'}"
                                 data-schedule-date="${draw.schedule_date}"
                                 data-timezone="${draw.timezone}">
                                 Edit
@@ -762,16 +871,16 @@ add_action('rest_api_init', function () {
     ));
 });
 
-// // Add AJAX handler for updating draw details
 function rdp_update_draw_details(WP_REST_Request $request) {
     // Validate input data
     $draw_id = $request->get_param('draw_id');
     $draw_name = $request->get_param('draw_name');
     $draw_organisation = $request->get_param('draw_organisation');
+    $schedule_type = $request->get_param('schedule_type');
     $schedule_date = $request->get_param('schedule_date');
     $timezone = $request->get_param('timezone');
 
-    if (empty($draw_id) || empty($draw_name) || empty($draw_organisation) || empty($schedule_date) || empty($timezone)) {
+    if (empty($draw_id) || empty($draw_name) || empty($draw_organisation) || empty($schedule_type) || empty($timezone)) {
         return new WP_REST_Response(array('success' => false, 'message' => 'Invalid data provided.'), 400);
     }
 
@@ -785,8 +894,8 @@ function rdp_update_draw_details(WP_REST_Request $request) {
     $draw_data = array(
         'name' => $draw_name,
         'organisation' => $draw_organisation,
-        'isScheduled' => true, // Assuming the draw is scheduled
-        'scheduleDate' => $schedule_date,
+        'isScheduled' => ($schedule_type === 'schedule'), // Set isScheduled based on schedule_type
+        'scheduleDate' => ($schedule_type === 'schedule') ? $schedule_date : null,
         'timezone' => $timezone
     );
 
@@ -825,7 +934,7 @@ function rdp_update_draw_details(WP_REST_Request $request) {
 
     // Success
     return new WP_REST_Response(array('success' => true, 'message' => 'Draw details updated successfully.'), 200);
-}
+} 
 add_action('wp_ajax_update_draw_details', 'rdp_update_draw_details');
 
 
