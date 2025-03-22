@@ -89,13 +89,13 @@ function get_latest_winner_results() {
             'entry_no' => $result->entry_no,
             'first_name' => $result->first_name,
             'last_name' => $result->last_name,
-            'email' => $result->email
+            'email' => $result->email,
+            'ticket_number' => $result->ticket_number // Add ticket number
         );
     }
 
     return rest_ensure_response($formatted_results);
 }
-
 function get_past_draws() {
     global $wpdb;
     $draw_details_table_name = $wpdb->prefix . "random_draw_details"; // Replace with your actual table name
@@ -644,6 +644,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 <th>First Name</th>
                 <th>Last Name</th>
                 <th>Email</th>
+                <th>Ticket Number</th> <!-- Add Ticket Number column -->
                 <th>Action</th>
             </tr>
         </thead>
@@ -660,6 +661,7 @@ document.addEventListener("DOMContentLoaded", function () {
                         <td><?php echo esc_html($result->first_name); ?></td>
                         <td><?php echo esc_html($result->last_name); ?></td>
                         <td><?php echo esc_html($result->email); ?></td>
+                        <td><?php echo esc_html($result->ticket_number); ?></td> <!-- Display Ticket Number -->
                         <td>
                             <form method="post" action="">
                                 <input type="hidden" name="delete_id" value="<?php echo esc_attr($result->id); ?>">
@@ -670,56 +672,50 @@ document.addEventListener("DOMContentLoaded", function () {
                 <?php endforeach; ?>
             <?php else: ?>
                 <tr>
-                    <td colspan="10">No results found.</td>
+                    <td colspan="11">No results found.</td>
                 </tr>
             <?php endif; ?>
         </tbody>
     </table>
-            </div>
+</div>
     <script>
 document.addEventListener("DOMContentLoaded", function () {
     function fetchResults() {
-        console.log("Fetching results..."); // Log each request
+    fetch("<?php echo esc_url(get_rest_url(null, 'random-draw-plugin/v1/get-winner-results/')); ?>")
+    .then(response => response.json())
+    .then(data => {
+        let tableBody = document.getElementById("results-table-body");
+        tableBody.innerHTML = ""; // Clear the existing table rows
 
-        fetch("<?php echo esc_url(get_rest_url(null, 'random-draw-plugin/v1/get-winner-results/')); ?>")
-        .then(response => {
-            // console.log("Request sent. Waiting for response...");
-            return response.json();
-        })
-        .then(data => {
-            console.log("Response received:", data); // Log received data
-
-            let tableBody = document.getElementById("results-table-body");
-            tableBody.innerHTML = ""; // Clear the existing table rows
-
-            if (data.length > 0) {
-                data.forEach(result => {
-                    let row = document.createElement("tr");
-                    row.innerHTML = `
-                        <td>${result.draw_id}</td>
-                        <td>${result.draw_name}</td>
-                        <td>${result.draw_organisation}</td>
-                        <td>${result.draw_date}</td>
-                        <td>${result.winner_no}</td>
-                        <td>${result.entry_no}</td>
-                        <td>${result.first_name}</td>
-                        <td>${result.last_name}</td>
-                        <td>${result.email}</td>
-                        <td>
-                            <form method="post" action="">
-                                <input type="hidden" name="delete_id" value="${result.id}">
-                                <button type="submit" name="delete_entry" class="button">Delete</button>
-                            </form>
-                        </td>
-                    `;
-                    tableBody.appendChild(row);
-                });
-            } else {
-                tableBody.innerHTML = `<tr><td colspan="10">No results found.</td></tr>`;
-            }
-        })
-        .catch(error => console.error("Error fetching results:", error));
-    }
+        if (data.length > 0) {
+            data.forEach(result => {
+                let row = document.createElement("tr");
+                row.innerHTML = `
+                    <td>${result.draw_id}</td>
+                    <td>${result.draw_name}</td>
+                    <td>${result.draw_organisation}</td>
+                    <td>${result.draw_date}</td>
+                    <td>${result.winner_no}</td>
+                    <td>${result.entry_no}</td>
+                    <td>${result.first_name}</td>
+                    <td>${result.last_name}</td>
+                    <td>${result.email}</td>
+                    <td>${result.ticket_number}</td> <!-- Add Ticket Number -->
+                    <td>
+                        <form method="post" action="">
+                            <input type="hidden" name="delete_id" value="${result.id}">
+                            <button type="submit" name="delete_entry" class="button">Delete</button>
+                        </form>
+                    </td>
+                `;
+                tableBody.appendChild(row);
+            });
+        } else {
+            tableBody.innerHTML = `<tr><td colspan="11">No results found.</td></tr>`;
+        }
+    })
+    .catch(error => console.error("Error fetching results:", error));
+}
 
     // Fetch updated results every second (for debugging)
     setInterval(fetchResults, 3000);
@@ -728,7 +724,7 @@ document.addEventListener("DOMContentLoaded", function () {
     fetchResults();
 });
         </script>
-  <h2>Past Draws (Non-Scheduled and Already Occurred)</h2>
+  <h2>Completed Draws </h2>
     <table class="wp-list-table widefat fixed striped">
         <thead>
             <tr>
@@ -809,59 +805,100 @@ document.addEventListener("DOMContentLoaded", function () {
 }
 
 // Function to generate CSV from product customers
-// Function to generate CSV from product customers
 function rdp_generate_csv_from_product($product_id) {
+    // Get all completed orders
     $orders = wc_get_orders(['limit' => -1, 'status' => 'completed']);
     $customers = [];
 
-    foreach ($orders as $order) {
-        foreach ($order->get_items() as $item) {
-            if ($item->get_product_id() == $product_id) {
-                $first_name = trim($order->get_billing_first_name());
-                $last_name = trim($order->get_billing_last_name());
-                $full_name = $first_name . ' ' . $last_name;
+    // Get the correct answer for the selected product
+    $correct_answer = '';
+    $questions = get_post_meta($product_id, '_lty_questions', true);
 
-                $customers[] = [
-                    'name' => $full_name,
-                    'email' => $order->get_billing_email(),
-                    'date' => $order->get_date_created()->date('Y-m-d')
-                ];
+    if (!empty($questions)) {
+        foreach ($questions as $question) {
+            if (!empty($question['answers'])) {
+                foreach ($question['answers'] as $answer) {
+                    // Check if the answer is marked as valid (correct)
+                    if (isset($answer['valid']) && $answer['valid'] === 'yes') {
+                        $correct_answer = $answer['label'];
+                        break;
+                    }
+                }
             }
         }
     }
 
+    // If no correct answer is found, return false
+    if (empty($correct_answer)) {
+        return false;
+    }
+
+    // Loop through each order
+    foreach ($orders as $order) {
+        // Loop through each item in the order
+        foreach ($order->get_items() as $item) {
+            // Check if the item's product ID matches the selected product
+            if ($item->get_product_id() == $product_id) {
+                // Get the chosen answer from item meta
+                $chosen_answer = wc_get_order_item_meta($item->get_id(), 'Chosen Answer', true);
+
+                // Compare the chosen answer with the correct answer
+                if ($chosen_answer === $correct_answer) {
+                    // Get ticket numbers from item meta
+                    $ticket_numbers = wc_get_order_item_meta($item->get_id(), 'Ticket Number( s )', true);
+
+                    // Extract ticket numbers from the HTML string
+                    preg_match('/<span class="notranslate">(.*?)<\/span>/', $ticket_numbers, $matches);
+                    $tickets = !empty($matches[1]) ? explode(', ', $matches[1]) : [];
+
+                    // Add customer details for each ticket
+                    foreach ($tickets as $ticket) {
+                        $customers[] = [
+                            'first_name' => $order->get_billing_first_name(),
+                            'last_name'  => $order->get_billing_last_name(),
+                            'email'      => $order->get_billing_email(),
+                            'ticket_number' => $ticket,
+                        ];
+                    }
+                }
+            }
+        }
+    }
+
+    // If no customers found, return false
     if (empty($customers)) {
         return false;
     }
 
+    // Prepare the CSV file
     $upload_dir = wp_upload_dir();
     $file_path = $upload_dir['path'] . '/customers.csv';
     $file_url = $upload_dir['url'] . '/customers.csv';
 
+    // Open the file for writing
     $file = fopen($file_path, 'w');
-    fputcsv($file, ['First Name', 'Last Name', 'Email', 'Order Date']);
 
+    // Add CSV headers
+    fputcsv($file, ['First Name', 'Last Name', 'Email', 'Ticket Number']);
+
+    // Add customer data to the CSV
     foreach ($customers as $customer) {
-        $name_parts = explode(' ', $customer['name'], 2);
-        $first_name = $name_parts[0] ?? '';
-        $last_name = $name_parts[1] ?? '';
-
-        fputcsv($file, [$first_name, $last_name, $customer['email'], $customer['date']]);
+        fputcsv($file, [
+            $customer['first_name'],
+            $customer['last_name'],
+            $customer['email'],
+            $customer['ticket_number'],
+        ]);
     }
 
+    // Close the file
     fclose($file);
 
+    // Return the file path
     return $file_path;
 }
 
 
-// function rdp_enqueue_admin_scripts($hook) {
-//     if ($hook != 'toplevel_page_random-draw-plugin') {
-//         return;
-//     }
-//     wp_enqueue_script('rdp-admin-script', plugins_url('admin-script.js', __FILE__), array('jquery'), null, true);
-//     wp_localize_script('rdp-admin-script', 'ajax_object', array('ajaxurl' => admin_url('admin-ajax.php')));
-// }
 // add_action('admin_enqueue_scripts', 'rdp_enqueue_admin_scripts');
 add_action('rest_api_init', function () {
     register_rest_route('random-draw-plugin/v1', '/update-draw/', array(
@@ -969,8 +1006,9 @@ function rdp_create_database_table() {
             first_name varchar(255) NOT NULL,
             last_name varchar(255) NOT NULL,
             email varchar(255) NOT NULL,
+            ticket_number varchar(255) NOT NULL, // Add ticket number column
             PRIMARY KEY (id),
-            UNIQUE KEY unique_entry (draw_id, email) -- Add unique constraint
+            UNIQUE KEY unique_entry (draw_id, email) // Add unique constraint
         ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
 
         // Execute the query
@@ -988,6 +1026,8 @@ function rdp_create_database_table() {
     }
 }
 register_activation_hook(__FILE__, 'rdp_create_database_table');
+
+
 
 function rdp_create_draw_details_table() {
     global $wpdb;
@@ -1390,6 +1430,8 @@ function rdp_fetch_results() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'random_draw_results';
 
+ 
+
     foreach ($draws_data['draws'] as $draw) {
         $draw_id = $draw['id'];
         $draw_name = $draw['name'];
@@ -1425,14 +1467,15 @@ function rdp_fetch_results() {
             $data = str_getcsv($line);
             if (count($data) === count($headers)) {
                 $email = $data[5]; // Assuming email is in the 6th column
-
+                $ticket_number = $data[6]; // Assuming ticket number is in the 7th column
+    
                 // Check if the entry already exists
                 $existing_entry = $wpdb->get_row($wpdb->prepare(
                     "SELECT * FROM $table_name WHERE draw_id = %s AND email = %s",
                     $draw_id,
                     $email
                 ));
-
+    
                 if (!$existing_entry) {
                     $wpdb->insert(
                         $table_name,
@@ -1445,14 +1488,16 @@ function rdp_fetch_results() {
                             'entry_no' => $data[2],
                             'first_name' => $data[3],
                             'last_name' => $data[4],
-                            'email' => $email
+                            'email' => $email,
+                            'ticket_number' => $ticket_number // Add ticket number
                         )
                     );
-                    $name = $data[3]."&nbsp;".$data[4];
-                    $send_mail = send_mail($email,$name);
+                    $name = $data[3] . "&nbsp;" . $data[4];
+                    $send_mail = send_mail($email, $name);
                 }
             }
         }
+    
     }
 
     // Display Success Message
