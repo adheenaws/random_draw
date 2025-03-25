@@ -40,22 +40,29 @@ add_action('rest_api_init', function () {
     ));
 });
 
-// Function to get latest draws from the database
 function get_latest_draws() {
     global $wpdb;
-    $draw_details_table_name = $wpdb->prefix . "random_draw_details"; // Replace with your actual table name
-    $draw_details = $wpdb->get_results("SELECT * FROM $draw_details_table_name");
+    $draw_details_table_name = $wpdb->prefix . "random_draw_details";
+    
+    $draw_details = $wpdb->get_results(
+        "SELECT * FROM $draw_details_table_name
+        WHERE is_scheduled = 1 AND schedule_date > UTC_TIMESTAMP()"
+    );
 
-    // Format the data for JSON response
     $formatted_draws = array();
     foreach ($draw_details as $draw) {
         if ($draw->is_scheduled && strtotime($draw->schedule_date) > time()) {
+            // Convert UTC date to local timezone
+            $utc_date = new DateTime($draw->schedule_date, new DateTimeZone('UTC'));
+            $utc_date->setTimezone(new DateTimeZone($draw->timezone));
+            $local_date = $utc_date->format('Y-m-d H:i:s');
+            
             $formatted_draws[] = array(
-                'draw_id'         => $draw->draw_id,
-                'draw_name'       => $draw->draw_name,
-                'draw_organisation' => $draw->draw_organisation,
-                'schedule_date'   => $draw->schedule_date,
-                'timezone'        => $draw->timezone
+                'draw_id'          => $draw->draw_id,
+                'draw_name'        => $draw->draw_name,
+                'draw_organisation'=> $draw->draw_organisation,
+                'schedule_date'    => $local_date, // Use the converted local date
+                'timezone'         => $draw->timezone
             );
         }
     }
@@ -75,7 +82,7 @@ add_action('rest_api_init', function () {
 function get_latest_winner_results() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'random_draw_results';
-    $results = $wpdb->get_results("SELECT * FROM $table_name ORDER BY draw_date DESC LIMIT 10");
+    $results = $wpdb->get_results("SELECT * FROM $table_name ORDER BY draw_date DESC LIMIT 5"); // Changed from 10 to 5
 
     // Format the data for JSON response
     $formatted_results = array();
@@ -90,12 +97,14 @@ function get_latest_winner_results() {
             'first_name' => $result->first_name,
             'last_name' => $result->last_name,
             'email' => $result->email,
-            'ticket_number' => $result->ticket_number // Add ticket number
+            'ticket_number' => $result->ticket_number
         );
     }
 
     return rest_ensure_response($formatted_results);
 }
+
+
 function get_past_draws() {
     global $wpdb;
     $draw_details_table_name = $wpdb->prefix . "random_draw_details"; // Replace with your actual table name
@@ -103,10 +112,10 @@ function get_past_draws() {
     // Fetch non-scheduled draws and already occurred scheduled draws
     $draw_details = $wpdb->get_results(
         "SELECT * FROM $draw_details_table_name
-         WHERE (is_scheduled = 0) OR (is_scheduled = 1 AND schedule_date <= NOW())"
+         WHERE (is_scheduled = 0) OR (is_scheduled = 1 AND schedule_date <= UTC_TIMESTAMP())"
     );
-
-    // Format the data for JSON response
+    
+   // Format the data for JSON response
     $formatted_draws = array();
     foreach ($draw_details as $draw) {
         $formatted_draws[] = array(
@@ -114,7 +123,7 @@ function get_past_draws() {
             'draw_name'       => $draw->draw_name,
             'draw_organisation' => $draw->draw_organisation,
             'is_scheduled'    => $draw->is_scheduled,
-            'schedule_date'   => $draw->schedule_date,
+            'schedule_date'   => $draw->schedule_date, // Already in UTC
             'timezone'        => $draw->timezone
         );
     }
@@ -175,16 +184,28 @@ function rdp_admin_page_html() {
         update_option('rdp_draw_name', $draw_name);
         update_option('rdp_draw_organisation', $draw_organisation);
         update_option('rdp_selected_product', $selected_product_id); // Save selected product ID
-   
+
+        // Convert local schedule date to UTC
+      
+        if (!empty($schedule_date)) {
+            $timezone_obj = new DateTimeZone($timezone); // User's selected timezone
+            $schedule_date_local = new DateTime($schedule_date, $timezone_obj);
+            $schedule_date_utc = $schedule_date_local->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        } else {
+            $schedule_date_utc = null;
+        }
+
+        // Save the UTC date
+        update_option('rdp_schedule_date_utc', $schedule_date_utc);
+
         // Automatically generate CSV and upload
         $file_path = rdp_generate_csv_from_product($selected_product_id);
         if ($file_path) {
-            rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw_organisation, $schedule_type, $schedule_date, $timezone, $file_path);
+            rdp_generate_token_and_upload_file($email, $password, $draw_name, $draw_organisation, $schedule_type, $schedule_date_utc, $timezone, $file_path);
         } else {
             echo '<div class="notice notice-error"><p>Failed to generate CSV file.</p></div>';
         }
-        }
-
+    }
 
     if (isset($_POST['fetch_results'])) {
         rdp_fetch_results();
@@ -200,18 +221,18 @@ function rdp_admin_page_html() {
         }
     }
 
+
     global $wpdb;
     $table_name = $wpdb->prefix . 'random_draw_results';
-    $results = $wpdb->get_results("SELECT * FROM $table_name ORDER BY draw_date DESC LIMIT 10");
+    $results = $wpdb->get_results("SELECT * FROM $table_name ORDER BY draw_date DESC LIMIT 5");
 
     // Fetch draw details from the database
     $draw_details_table_name = $wpdb->prefix . 'random_draw_details';
     $draw_details = $wpdb->get_results("SELECT * FROM $draw_details_table_name");
     $past_draws = $wpdb->get_results(
         "SELECT * FROM $draw_details_table_name
-         WHERE (is_scheduled = 0) OR (is_scheduled = 1 AND schedule_date <= NOW())"
+         WHERE (is_scheduled = 0) OR (is_scheduled = 1 AND schedule_date <= UTC_TIMESTAMP())"
     );
-
 
             // Retrieve saved email, password, draw name, and organisation
     $saved_email = get_option('rdp_email', '');
@@ -247,18 +268,35 @@ $products = wc_get_products(array('status' => 'publish', 'limit' => -1));
                  <td><input name="draw_organisation" type="text" id="draw_organisation" value="<?php echo esc_attr($saved_draw_organisation); ?>" class="regular-text" required></td>
              </tr>
              <tr>
-                 <th scope="row"><label for="selected_product">Competition</label></th>
-                 <td>
-                     <select name="selected_product" id="selected_product" class="regular-text" required>
-                         <option value="">Select a Product</option>
-                         <?php foreach ($products as $product): ?>
-                             <option value="<?php echo esc_attr($product->get_id()); ?>" <?php selected($saved_selected_product, $product->get_id()); ?>>
-                                 <?php echo esc_html($product->get_name()); ?>
-                             </option>
-                         <?php endforeach; ?>
-                     </select>
-                 </td>
-             </tr>
+                <th scope="row"><label for="selected_product">Competition</label></th>
+                <td>
+                    <select name="selected_product" id="selected_product" class="regular-text" required>
+                        <option value="">Select a Product</option>
+                        <?php
+                        // Fetch only products with the product type "lottery"
+                        $args = array(
+                            'post_type'      => 'product',
+                            'posts_per_page' => -1,
+                            'tax_query'      => array(
+                                array(
+                                    'taxonomy' => 'product_type',
+                                    'field'    => 'slug',
+                                    'terms'    => 'lottery', // Filter by product type "lottery"
+                                ),
+                            ),
+                        );
+                        $products = get_posts($args);
+
+                        foreach ($products as $product) :
+                            $product = wc_get_product($product->ID); // Get the WooCommerce product object
+                            ?>
+                            <option value="<?php echo esc_attr($product->get_id()); ?>" <?php selected($saved_selected_product, $product->get_id()); ?>>
+                                <?php echo esc_html($product->get_name()); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </td>
+            </tr>
              <tr>
                  <th scope="row"><label for="schedule_type">Schedule Type</label></th>
                  <td>
@@ -348,6 +386,10 @@ $products = wc_get_products(array('status' => 'publish', 'limit' => -1));
                                 data-schedule-date="<?php echo esc_attr($draw->schedule_date); ?>"
                                 data-timezone="<?php echo esc_attr($draw->timezone); ?>">
                                 Edit
+                            </button>
+                            <button class="delete-draw-button"
+                                data-draw-id="<?php echo esc_attr($draw->draw_id); ?>">
+                                Delete
                             </button>
                         </td>
                     </tr>
@@ -504,25 +546,32 @@ document.addEventListener("DOMContentLoaded", function () {
     let modal = document.getElementById("editDrawModal");
     let closeModal = document.querySelector(".close");
 
-    // Function to handle edit button clicks
-    function handleEditButtonClick(event) {
-        if (event.target.classList.contains("edit-draw-button")) {
-            let button = event.target;
-            document.getElementById('editDrawId').value = button.getAttribute('data-draw-id');
-            document.getElementById('editDrawName').value = button.getAttribute('data-draw-name');
-            document.getElementById('editDrawOrganisation').value = button.getAttribute('data-draw-organisation');
-            document.getElementById('editScheduleType').value = 'schedule'; // Set to "Schedule" by default
-            document.getElementById('editScheduleDate').value = button.getAttribute('data-schedule-date');
-            document.getElementById('editTimezone').value = button.getAttribute('data-timezone');
+    // In your edit button click handler
+        function handleEditButtonClick(event) {
+            if (event.target.classList.contains("edit-draw-button")) {
+                let button = event.target;
+                document.getElementById('editDrawId').value = button.getAttribute('data-draw-id');
+                document.getElementById('editDrawName').value = button.getAttribute('data-draw-name');
+                document.getElementById('editDrawOrganisation').value = button.getAttribute('data-draw-organisation');
+                document.getElementById('editScheduleType').value = 'schedule';
 
-            // Show the schedule date field by default
-            document.getElementById('editScheduleDate').style.display = 'block';
-            document.getElementById('editScheduleDateLabel').style.display = 'block';
-
-            modal.style.display = "block";
+                // Get UTC date from data attribute
+                let utcDateString = button.getAttribute('data-schedule-date');
+                
+                // Convert UTC to local time for display in the datetime-local input
+                if (utcDateString) {
+                    let utcDate = new Date(utcDateString);
+                    let localDate = new Date(utcDate.getTime() - (utcDate.getTimezoneOffset() * 60000));
+                    let localDateString = localDate.toISOString().slice(0, 16);
+                    document.getElementById('editScheduleDate').value = localDateString;
+                }
+                
+                document.getElementById('editTimezone').value = button.getAttribute('data-timezone');
+                document.getElementById('editScheduleDate').style.display = 'block';
+                document.getElementById('editScheduleDateLabel').style.display = 'block';
+                modal.style.display = "block";
+            }
         }
-    }
-
     // Close modal when clicking the 'x'
     closeModal.onclick = function () {
         modal.style.display = "none";
@@ -550,15 +599,28 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Handle form submission via AJAX
     document.getElementById('editDrawForm').addEventListener('submit', function (event) {
-        event.preventDefault(); // Prevent the default form submission
+        event.preventDefault();
+            
+            let formData = new FormData(this);
+            let timezone = formData.get('timezone');
+            let localDateString = formData.get('schedule_date');
+            
+            if (localDateString) {
+                // Create a date object from the local datetime string
+                let localDate = new Date(localDateString);
+                
+                // Format as ISO string in UTC (this automatically converts to UTC)
+                let utcDateString = localDate.toISOString();
+                
+                // Add the UTC date to the form data
+                formData.set('schedule_date', utcDateString);
+            }
 
-        let formData = new FormData(this);
-
-        fetch("<?php echo esc_url(get_rest_url(null, 'random-draw-plugin/v1/update-draw/')); ?>", {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
+            fetch("<?php echo esc_url(get_rest_url(null, 'random-draw-plugin/v1/update-draw/')); ?>", {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
         .then(data => {
             if (data.success) {
                 alert('Draw details updated successfully!');
@@ -584,12 +646,17 @@ document.addEventListener("DOMContentLoaded", function () {
 
             if (data.length > 0) {
                 data.forEach(draw => {
+                    // Display UTC date as-is without conversion
+                    let utcDisplayDate = draw.schedule_date.includes('T') ? 
+                        draw.schedule_date.replace('T', ' ').replace(/\.\d{3}Z$/, '') : // ISO format
+                        draw.schedule_date; // Already in display format
+
                     let row = document.createElement("tr");
                     row.innerHTML = `
                         <td>${draw.draw_id}</td>
                         <td>${draw.draw_name}</td>
                         <td>${draw.draw_organisation}</td>
-                        <td>${draw.schedule_date}</td>
+                        <td>${utcDisplayDate}</td>
                         <td>${draw.timezone}</td>
                         <td>
                             <button class="edit-draw-button"
@@ -600,6 +667,10 @@ document.addEventListener("DOMContentLoaded", function () {
                                 data-schedule-date="${draw.schedule_date}"
                                 data-timezone="${draw.timezone}">
                                 Edit
+                            </button>
+                            <button class="delete-draw-button"
+                                data-draw-id="${draw.draw_id}">
+                                Delete
                             </button>
                         </td>
                     `;
@@ -621,7 +692,6 @@ document.addEventListener("DOMContentLoaded", function () {
     // Use event delegation for dynamically created elements
     document.getElementById("draw-table-body").addEventListener("click", handleEditButtonClick);
 });
-
 </script>
 <!-- test -->
 
@@ -645,7 +715,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 <th>Last Name</th>
                 <th>Email</th>
                 <th>Ticket Number</th> <!-- Add Ticket Number column -->
-                <th>Action</th>
             </tr>
         </thead>
         <tbody id="results-table-body">
@@ -662,12 +731,6 @@ document.addEventListener("DOMContentLoaded", function () {
                         <td><?php echo esc_html($result->last_name); ?></td>
                         <td><?php echo esc_html($result->email); ?></td>
                         <td><?php echo esc_html($result->ticket_number); ?></td> <!-- Display Ticket Number -->
-                        <td>
-                            <form method="post" action="">
-                                <input type="hidden" name="delete_id" value="<?php echo esc_attr($result->id); ?>">
-                                <?php submit_button('Delete', 'delete', 'delete_entry', false); ?>
-                            </form>
-                        </td>
                     </tr>
                 <?php endforeach; ?>
             <?php else: ?>
@@ -700,13 +763,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     <td>${result.first_name}</td>
                     <td>${result.last_name}</td>
                     <td>${result.email}</td>
-                    <td>${result.ticket_number}</td> <!-- Add Ticket Number -->
-                    <td>
-                        <form method="post" action="">
-                            <input type="hidden" name="delete_id" value="${result.id}">
-                            <button type="submit" name="delete_entry" class="button">Delete</button>
-                        </form>
-                    </td>
+                    <td>${result.ticket_number}</td>
                 `;
                 tableBody.appendChild(row);
             });
@@ -722,6 +779,38 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initial call to load data immediately
     fetchResults();
+});
+document.addEventListener("DOMContentLoaded", function () {
+    // Handle delete button clicks
+    document.getElementById("draw-table-body").addEventListener("click", function (event) {
+        if (event.target.classList.contains("delete-draw-button")) {
+            let drawId = event.target.getAttribute('data-draw-id');
+            
+            if (confirm('Are you sure you want to delete this draw?')) {
+                fetch("<?php echo esc_url(get_rest_url(null, 'random-draw-plugin/v1/delete-draw/')); ?>", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-WP-Nonce': '<?php echo wp_create_nonce('wp_rest'); ?>'
+                    },
+                    body: JSON.stringify({ draw_id: drawId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Draw deleted successfully!');
+                        fetchDraws(); // Refresh the table
+                    } else {
+                        alert('Failed to delete draw: ' + data.message);
+                    }
+                })
+                // .catch(error => {
+                //     console.error('Error:', error);
+                //     alert('Error.');
+                // });
+            }
+        }
+    });
 });
         </script>
   <h2>Completed Draws </h2>
@@ -803,6 +892,105 @@ document.addEventListener("DOMContentLoaded", function () {
 </div>
 <?php
 }
+
+// function rdp_delete_draw($draw_id) {
+    function rdp_delete_draw(WP_REST_Request $request) {
+        
+        // Check permissions
+    if (!current_user_can('manage_options')) {
+        return new WP_REST_Response(['success' => false, 'message' => 'You do not have permission to perform this action.'], 403);
+    }
+    
+        $base_url = 'https://api.randomdraws.com';
+        
+        // Retrieve saved email and password
+        $email = get_option('rdp_email', '');
+        $password = get_option('rdp_password', '');
+    
+        if (empty($email) || empty($password)) {
+            return new WP_REST_Response(['success' => false, 'message' => 'Email and password are required to generate a token.'], 401);
+        }
+
+        // Step 1: Generate Token
+        $token_url = $base_url . '/tokens';
+        $token_data = array(
+            'email' => $email,
+            'password' => $password
+        );
+    
+        $token_response = wp_remote_post($token_url, array(
+            'body' => json_encode($token_data),
+            'headers' => array('Content-Type' => 'application/json'),
+            'timeout' => 30
+        ));
+    
+        if (is_wp_error($token_response)) {
+            error_log('Token request failed: ' . $token_response->get_error_message());
+            return new WP_REST_Response(['success' => false, 'message' => 'Token request failed.'], 500);
+        }
+    
+        $token_body = wp_remote_retrieve_body($token_response);
+        $token_data = json_decode($token_body, true);
+    
+        if (empty($token_data['token'])) {
+            error_log('Token not found in response: ' . print_r($token_body, true));
+            return new WP_REST_Response(['success' => false, 'message' => 'Token not found in response.'], 500);
+        }
+    
+        $token = $token_data['token'];
+        set_transient('rdp_token', $token, 3600); // Token expires in 1 hour
+    
+     
+    // Get parameters
+    $params = $request->get_json_params();
+    $draw_id = isset($params['draw_id']) ? sanitize_text_field($params['draw_id']) : '';
+    
+    if (empty($draw_id)) {
+        return new WP_REST_Response(['success' => false, 'message' => 'Draw ID is required.'], 400);
+    }
+    
+        $delete_url = $base_url . '/draws/' . $draw_id;
+    
+        $response = wp_remote_request($delete_url, [
+            'method'  => 'DELETE',
+            'headers' => [
+                'Authorization' => 'Bearer ' . $token,
+                'Content-Type' => 'application/json',
+            ],
+            'timeout' => 30,
+        ]);
+    
+        if (is_wp_error($response)) {
+            error_log('Delete draw request failed: ' . $response->get_error_message());
+            return new WP_REST_Response(['success' => false, 'message' => 'API Request Failed: ' . $response->get_error_message()], 500);
+        }
+    
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+    
+        // if ($response_code !== 200) {
+        //     error_log('Delete draw failed: ' . $response_body);
+        //     return new WP_REST_Response(['success' => false, 'message' => 'API Error: ' . $response_body], $response_code);
+        // }
+    
+        // Delete from local database
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'random_draw_details';
+        $wpdb->delete($table_name, ['draw_id' => $draw_id]);
+    
+        return new WP_REST_Response(['success' => true, 'message' => 'Draw deleted successfully.'], 200);
+    }
+
+    add_action('rest_api_init', function () {
+        register_rest_route('random-draw-plugin/v1', '/delete-draw/', array(
+            'methods'  => 'POST',
+            'callback' => 'rdp_delete_draw',
+            'permission_callback' => function() {
+                return current_user_can('manage_options');
+            }
+        ));
+    });
+
 
 // Function to generate CSV from product customers
 function rdp_generate_csv_from_product($product_id) {
@@ -927,12 +1115,35 @@ function rdp_update_draw_details(WP_REST_Request $request) {
         return new WP_REST_Response(array('success' => false, 'message' => 'Token not found or expired.'), 401);
     }
 
-    // Prepare the request body
+     // Process schedule date
+     if (!empty($schedule_date)) {
+        try {
+            // The date should already be in UTC from the JavaScript
+            $schedule_date_utc = new DateTime($schedule_date, new DateTimeZone('UTC'));
+            
+            // Validate it's a proper UTC date
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/', $schedule_date)) {
+                throw new Exception('Invalid date format');
+            }
+            
+            // Format as UTC with Zulu time indicator
+            $schedule_date_utc = $schedule_date_utc->format('Y-m-d\TH:i:s\Z');
+        } catch (Exception $e) {
+            return new WP_REST_Response(array(
+                'success' => false, 
+                'message' => 'Invalid date format provided. Expected format: YYYY-MM-DDTHH:mm:ssZ',
+                'received' => $schedule_date
+            ), 400);
+        }
+    } else {
+        $schedule_date_utc = null;
+    }
+    // Prepare the request body with UTC date
     $draw_data = array(
         'name' => $draw_name,
         'organisation' => $draw_organisation,
-        'isScheduled' => ($schedule_type === 'schedule'), // Set isScheduled based on schedule_type
-        'scheduleDate' => ($schedule_type === 'schedule') ? $schedule_date : null,
+        'isScheduled' => ($schedule_type === 'schedule'),
+        'scheduleDate' => $schedule_date_utc,
         'timezone' => $timezone
     );
 
@@ -971,9 +1182,8 @@ function rdp_update_draw_details(WP_REST_Request $request) {
 
     // Success
     return new WP_REST_Response(array('success' => true, 'message' => 'Draw details updated successfully.'), 200);
-} 
+}
 add_action('wp_ajax_update_draw_details', 'rdp_update_draw_details');
-
 
 function rdp_delete_entry($id) {
     global $wpdb;
@@ -1041,7 +1251,7 @@ function rdp_create_draw_details_table() {
             draw_name varchar(255) NOT NULL,
             draw_organisation varchar(255) NOT NULL,
             is_scheduled tinyint(1) NOT NULL,
-            schedule_date datetime NOT NULL,
+            schedule_date datetime NOT NULL, // Store in UTC
             timezone varchar(100) NOT NULL,
             PRIMARY KEY (id),
             UNIQUE KEY unique_draw (draw_id)
@@ -1062,6 +1272,7 @@ function rdp_create_draw_details_table() {
     }
 }
 register_activation_hook(__FILE__, 'rdp_create_draw_details_table');
+
 
 
 function rdp_fetch_and_store_draw_details() {
@@ -1143,6 +1354,15 @@ function rdp_fetch_and_store_draw_details() {
             error_log('Invalid draw data format: ' . print_r($draw, true));
             continue;
         }
+         // Convert schedule date to UTC
+         if (!empty($draw['scheduleDate'])) {
+            $timezone_obj = new DateTimeZone($draw['timezone']);
+            $schedule_date_local = new DateTime($draw['scheduleDate'], $timezone_obj);
+            $schedule_date_utc = $schedule_date_local->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        } else {
+            $schedule_date_utc = null;
+        }
+
 
         // Extract data from the API response
         $draw_id = isset($draw['id']) ? $draw['id'] : '';
@@ -1459,40 +1679,40 @@ function rdp_fetch_results() {
             continue;
         }
 
-        // Parse the CSV response
-        $lines = explode("\n", $results_body);
-        $headers = str_getcsv(array_shift($lines));
+      // Parse the CSV response
+      $lines = explode("\n", $results_body);
+      $headers = str_getcsv(array_shift($lines));
 
-        foreach ($lines as $line) {
-            $data = str_getcsv($line);
-            if (count($data) === count($headers)) {
-                $email = $data[5]; // Assuming email is in the 6th column
-                $ticket_number = $data[6]; // Assuming ticket number is in the 7th column
+      foreach ($lines as $line) {
+          $data = str_getcsv($line);
+          if (count($data) === count($headers)) {
+              $email = $data[5]; // Assuming email is in the 6th column
+              $ticket_number = $data[6]; // Assuming ticket number is in the 7th column
+
+              // Check if the entry already exists
+              $existing_entry = $wpdb->get_row($wpdb->prepare(
+                  "SELECT * FROM $table_name WHERE draw_id = %s AND email = %s",
+                  $draw_id,
+                  $email
+              ));
     
-                // Check if the entry already exists
-                $existing_entry = $wpdb->get_row($wpdb->prepare(
-                    "SELECT * FROM $table_name WHERE draw_id = %s AND email = %s",
-                    $draw_id,
-                    $email
-                ));
-    
-                if (!$existing_entry) {
-                    $wpdb->insert(
-                        $table_name,
-                        array(
-                            'draw_id' => $draw_id,
-                            'draw_name' => $draw_name,
-                            'draw_organisation' => $draw_organisation,
-                            'draw_date' => current_time('mysql'),
-                            'winner_no' => $data[1],
-                            'entry_no' => $data[2],
-                            'first_name' => $data[3],
-                            'last_name' => $data[4],
-                            'email' => $email,
-                            'ticket_number' => $ticket_number // Add ticket number
-                        )
-                    );
-                    $name = $data[3] . "&nbsp;" . $data[4];
+              if (!$existing_entry) {
+                $wpdb->insert(
+                    $table_name,
+                    array(
+                        'draw_id' => $draw_id,
+                        'draw_name' => $draw_name,
+                        'draw_organisation' => $draw_organisation,
+                        'draw_date' => current_time('mysql', 1), // Store in UTC
+                        'winner_no' => $data[1],
+                        'entry_no' => $data[2],
+                        'first_name' => $data[3],
+                        'last_name' => $data[4],
+                        'email' => $email,
+                        'ticket_number' => $ticket_number // Add ticket number
+                    )
+                );
+                    $name = $data[3] . " " . $data[4];
                     $send_mail = send_mail($email, $name);
                 }
             }
@@ -1514,11 +1734,15 @@ add_action('wp', 'rdp_schedule_cron_job');
 
 // Hook the function to the cron job
 add_action('rdp_check_completed_draws', 'rdp_check_completed_draws');
-
 function rdp_check_completed_draws() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'random_draw_details';
-    $draws = $wpdb->get_results("SELECT * FROM $table_name WHERE is_scheduled = 1 AND schedule_date <= NOW()");
+
+    // Check for draws where the schedule date (in UTC) has passed
+    $draws = $wpdb->get_results(
+        "SELECT * FROM $table_name
+         WHERE is_scheduled = 1 AND schedule_date <= UTC_TIMESTAMP()"
+    );
 
     foreach ($draws as $draw) {
         rdp_fetch_results_for_draw($draw->draw_id);
@@ -1581,7 +1805,7 @@ function rdp_fetch_results_for_draw($draw_id) {
                         'draw_id' => $draw_id,
                         'draw_name' => $draw['name'],
                         'draw_organisation' => $draw['organisation'],
-                        'draw_date' => current_time('mysql'),
+                        'draw_date' => current_time('mysql', 1), // Store in UTC
                         'winner_no' => $data[1],
                         'entry_no' => $data[2],
                         'first_name' => $data[3],
@@ -1674,13 +1898,83 @@ add_action('rest_api_init', function () {
     ));
 });
 
-function send_mail($email,$name){
+function send_mail($email, $name) {
     $mail = new PHPMailer(true);
-    $to= $email;
-    $subject = "Sample mail";
-    $message = "Hi $name,
-        congratulations...! you are the winner,stay tuned for big news.";
-   
+    $to = $email;
+    $subject = "Congratulations! You Are a Winner!";
+    
+    // Enhanced HTML email content with inline CSS
+    $message = '
+    <html>
+    <head>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                background-color: #f4f4f4;
+                color: #333;
+                margin: 0;
+                padding: 0;
+            }
+            .email-container {
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #ffffff;
+                border-radius: 8px;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            }
+            .header {
+                text-align: center;
+                padding: 20px 0;
+                background-color: #0073aa;
+                color: #ffffff;
+                border-radius: 8px 8px 0 0;
+            }
+            .header h1 {
+                margin: 0;
+                font-size: 24px;
+            }
+            .content {
+                padding: 20px;
+                line-height: 1.6;
+            }
+            .content h2 {
+                color: #0073aa;
+                font-size: 20px;
+            }
+            .footer {
+                text-align: center;
+                padding: 20px;
+                font-size: 12px;
+                color: #777;
+                border-top: 1px solid #ddd;
+                margin-top: 20px;
+            }
+            .footer a {
+                color: #0073aa;
+                text-decoration: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <div class="header">
+                <h1>Congratulations!</h1>
+            </div>
+            <div class="content">
+                <h2>Hello ' . htmlspecialchars($name) . ',</h2>
+                <p>We are thrilled to inform you that you are the winner of our recent draw! </p>
+                <p>Stay tuned for more exciting news and updates. We will be in touch shortly with further details.</p>
+                <p>Thank you for participating and congratulations once again!</p>
+            </div>
+            <div class="footer">
+                <p>If you have any questions, feel free to <a href="mailto:support@example.com">contact us</a>.</p>
+                <p>&copy; ' . date("Y") . ' Random Draw. All rights reserved.</p>
+            </div>
+        </div>
+    </body>
+    </html>';
+
     try {
         // SMTP Configuration
         $mail->isSMTP();
@@ -1692,7 +1986,7 @@ function send_mail($email,$name){
         $mail->Port = 587; // Common SMTP ports: 465 (SSL), 587 (STARTTLS)
 
         // Email Settings
-        $mail->setFrom('noreply3@weamse.dev', 'random-Draw');
+        $mail->setFrom('noreply3@weamse.dev', 'Random Draw');
         $mail->addAddress($to); // Recipient's email
         $mail->isHTML(true);
         $mail->Subject = $subject;
